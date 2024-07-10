@@ -5,8 +5,6 @@ from hypothesis import given, strategies as st, settings
 import pytest
 
 
-
-
 def type_to_strategy(annotation):
     """Converts type annotations to Hypothesis strategies."""
     if annotation == int:
@@ -28,10 +26,6 @@ def type_to_strategy(annotation):
             return f"st.dictionaries({key_type}, {value_type})"
     elif isinstance(annotation, TypeVar):
         return "st.integers()"  # Default to integers for generic type variables
-    #####
-    elif isinstance(annotation, NewType):
-        return "st.integers()"  # Default to integers for generic NewType variables
-    #####
     elif annotation == Any:
         return "st.one_of(st.integers(), st.floats(), st.text(), st.booleans())"  # Default to any type
     raise ValueError(f"Unsupported type: {annotation}")
@@ -63,12 +57,12 @@ def test_{func_name}({args}):
 
 
 def main():
-    # Load the module
+    # Load the module dynamicaly
     module_name = 'sample_test_files'
     file_path = 'sample_test_files.py'
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    spec.loader.exec_module(module)  # Execute and load the module codes
 
     # Parse the file
     with open(file_path, "r") as source:
@@ -80,6 +74,7 @@ def main():
     test_code = "from hypothesis import given, strategies as st, settings\n"
     test_code += f"from {module_name} import *\n\n"
 
+    # Extract function name + type hint
     for func in functions:
         func_name = func.name
         func_obj = getattr(module, func_name)
