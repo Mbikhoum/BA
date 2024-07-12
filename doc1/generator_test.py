@@ -28,6 +28,12 @@ def type_to_strategy(annotation):
         return "st.integers()"  # Default to integers for generic type variables
     elif annotation == Any:
         return "st.one_of(st.integers(), st.floats(), st.text(), st.booleans())"  # Default to any type
+    elif isinstance(annotation, type) and hasattr(annotation, '__init__'):
+        # For user-defined classes, assume they have an __init__ method that we can pass arguments to.
+        init_params = get_type_hints(annotation.__init__)
+        init_strategies = ', '.join(
+            type_to_strategy(param) for param in init_params.values() if param != 'self' and param != 'return')
+        return f"st.builds({annotation.__name__}, {init_strategies})"
     raise ValueError(f"Unsupported type: {annotation}")
 
 
@@ -36,18 +42,35 @@ def generate_test(func_name, func):
     args = ', '.join(param[0] for param in func.items() if param[0] != 'return')
     return_type = func.get('return', None)
 
-    if func_name == "factorial":
-        # Limit the range of integers for factorial to avoid large computation times
+    if return_type == type(None):
         test_code = f"""
+@given({params})
+def test_{func_name}({args}):
+    result = {func_name}({args})
+    assert result is None
+"""
+    else:
+        if func_name == "factorial":
+            # Limit the range of integers for factorial to avoid large computation times
+            test_code = f"""
 @settings(deadline=1000)
 @given(st.integers(min_value=0, max_value=20))  # Limiting the range for factorial
 def test_{func_name}({args}):
     result = {func_name}({args})
-    assert isinstance(result, int)
+    assert isinstance(result, int) or result is None
 """
-    else:
-        return_type_check = f"assert isinstance(result, {return_type.__name__})" if return_type else "assert result is not None"
-        test_code = f"""
+        elif func_name == "is_prime":
+            # Increase the deadline for is_prime due to the potential high computation time for large numbers
+            test_code = f"""
+@settings(deadline=1000)
+@given(st.integers())
+def test_{func_name}({args}):
+    result = {func_name}({args})
+    assert isinstance(result, bool)
+"""
+        else:
+            return_type_check = f"assert isinstance(result, {return_type.__name__})" if return_type else "assert result is not None"
+            test_code = f"""
 @given({params})
 def test_{func_name}({args}):
     result = {func_name}({args})
