@@ -1,37 +1,82 @@
 import ast
 import importlib.util
-from typing import get_type_hints
+from typing import get_type_hints, Union
 import array
 
 import pytest
 from strategies import type_to_strategy
+import sys
 
 
 def generate_test(func_name, func, class_name=None):
     global generated_code
     global return_type_check
 
-    params = ', '.join(type_to_strategy(param[1]) for param in func.items() if param[0] != 'return')
+    params = ', '.join(
+        type_to_strategy(param[1]) for param in func.items() if param[0] != 'return'
+    )
     args = ', '.join(param[0] for param in func.items() if param[0] != 'return')
     return_type = func.get('return', None)
 
-    return_type_check = f"assert isinstance(result, {return_type.__name__})" if return_type else "assert result is not None"
+    if hasattr(return_type, '__origin__') and return_type.__origin__ == Union:
+        return_checks = " or ".join(
+            f"isinstance(result, {rtype.__name__})" if rtype != type(
+                None
+            ) else "result is None"
+            for rtype in return_type.__args__
+        )
+        return_type_check = f"assert {return_checks}"
+    else:
+        return_type_check = f"assert isinstance(result, {return_type.__name__})" if return_type else "assert result is not None"
+
+
+
     if return_type == array.array:
         return_type_check = f"assert isinstance(result, array.array)"
+
 
     # generated test fonction in methods
     if class_name:
         # Instantiate the class
-        generated_code = f"""
+        # if no parameter with return type
+        if not params and return_type is not None:
+            params = "just(None)"
+            args = "_"
+            generated_code = f"""
+@given({params})
+def test_{class_name}_{func_name}({args}):
+    {class_name.lower()} = {class_name}()
+    result = {class_name.lower()}.{func_name}()
+    {return_type_check}
+"""
+            return generated_code
+
+        else:
+            generated_code = f"""
 @given({params})
 def test_{class_name}_{func_name}({args}):
     instance = {class_name}()
     result = instance.{func_name}({args})
     {return_type_check}
 """
-    else:
-        # Function at module level
-        generated_code = f"""
+            return generated_code
+
+    if not class_name:  # Function at module level
+
+        # if no parameter with return type
+        if not params and return_type is not None:
+            params = "just(None)"
+            args = "_"
+            generated_code = f"""
+@given({params})
+def test_{func_name}({args}):
+    result = {func_name}()
+    {return_type_check}
+"""
+            return generated_code
+
+    # for standart fonction
+    generated_code = f"""
 @given({params})
 def test_{func_name}({args}):
     result = {func_name}({args})
@@ -42,8 +87,9 @@ def test_{func_name}({args}):
 
 def main():
     global test_code
-    module_name = 'finaltest'
-    file_path = 'finaltest.py'
+    sys.path.append('') #  path of the file to a succesful import
+    module_name = 'smalltest'
+    file_path = 'smalltest.py'  #../web_gui/pom/pages/kk/kk001.py
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # Execute and load the module code
@@ -61,6 +107,7 @@ def main():
     test_code += "import numpy as np\n\n"
     test_code += "from hypothesis.extra import numpy as stnumpy\n\n"
     test_code += "from hypothesis.extra.numpy import *\n\n"
+    test_code += "from hypothesis.strategies import just"
 
     # Process classes and functions
     for node in tree.body:
