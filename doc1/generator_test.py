@@ -1,19 +1,20 @@
 import ast
 import importlib.util
 import inspect
-from typing import get_type_hints, List, Dict, Tuple, TypeVar, Any, NewType, Callable
+from typing import get_type_hints, Any, TypeVar, Union
+from hypothesis import given
+from hypothesis import strategies as st
 from hypothesis.extra import numpy as stnumpy
 from binarytree import Node
 import numpy as np
 import array
 from collections import deque
 import pytest
-from hypothesis import given, strategies as st
 
 
 def type_to_strategy(annotation, visited_types=None):
     """Converts type annotations to Hypothesis strategies."""
-    # for protection agains recursiv call or infinite call
+    # Protect against recursive or infinite calls
     if visited_types is None:
         visited_types = set()
     if annotation in visited_types:
@@ -21,8 +22,7 @@ def type_to_strategy(annotation, visited_types=None):
 
     visited_types.add(annotation)
 
-    # Convertion basic type
-
+    # Convert basic types
     if annotation == int:
         return "st.integers(min_value=-2**31, max_value=2**31-1)"
     elif annotation == float:
@@ -32,19 +32,15 @@ def type_to_strategy(annotation, visited_types=None):
     elif annotation == bool:
         return "st.booleans()"
 
-
-    # To handle array
-
+    # Handle arrays
     elif annotation == array.array:
-        # match type to hypothesis strategies
         typecode_to_strategy = {
-            'i': 'st.integers(min_value=-2**31, max_value=2**31-1)',  # int
-            'f': 'st.floats()',  # float
-            'd': 'st.floats()',  # double
-            'u': 'st.text()',  # String
-            'c': 'st.complex_numbers()',  # Nombres complexes
+            'i': 'st.integers(min_value=-2**31, max_value=2**31-1)',
+            'f': 'st.floats()',
+            'd': 'st.floats()',
+            'u': 'st.text()',
+            'c': 'st.complex_numbers()',
         }
-        # dynamique Typecode extraction
         if hasattr(annotation, '__args__') and annotation.__args__:
             element_type = annotation.__args__[0]
             if element_type == int:
@@ -57,9 +53,8 @@ def type_to_strategy(annotation, visited_types=None):
                 typecode = 'u'
             else:
                 typecode = 'i'
-
         else:
-            typecode = 'i'  # default value
+            typecode = 'i'
 
         if typecode in typecode_to_strategy:
             return f"st.builds(array.array, st.just('{typecode}'), st.lists({typecode_to_strategy[typecode]}))"
@@ -67,8 +62,7 @@ def type_to_strategy(annotation, visited_types=None):
             raise ValueError(f"Unsupported array typecode: {typecode}")
 
 
-    # hadle other complex type
-
+    # Handle more complex types
     elif hasattr(annotation, '__origin__'):
         if annotation.__origin__ == list:
             return f"st.lists({type_to_strategy(annotation.__args__[0])})"
@@ -82,59 +76,52 @@ def type_to_strategy(annotation, visited_types=None):
             return f"st.builds(deque, st.lists({type_to_strategy(annotation.__args__[0])}))"
         elif annotation.__origin__ == set:
             return f"st.sets({type_to_strategy(annotation.__args__[0])})"
+        elif annotation.__origin__ == Union:
+            union_strategies = [type_to_strategy(arg) for arg in annotation.__args__]
+            return f"st.one_of({', '.join(union_strategies)})"
 
-    # Type Alias
 
     elif isinstance(annotation, TypeVar):
-        return "st.integers()"  # Default to integers for generic type variables
+        return "st.integers()"
     elif annotation == Any:
-        return "st.one_of(st.integers(), st.floats(), st.text(), st.booleans())"  # Default to any type
+        return "st.one_of(st.integers(), st.floats(), st.text(), st.booleans())"
 
-
-
-
-    # Node,tree
+    # Node (binary tree node)
     elif annotation == Node:
-        # Handle the Node type (binary tree node)
-        # Assuming a Node has left , right attribute  and a value for the node value
-        return "st.builds(Node, st.integers(), st.one_of(st.none(), st.builds(Node, st.integers(), st.none(), " \
-               "st.none())), st.one_of(st.none(), st.builds(Node, st.integers(), st.none(), st.none()))) "
+        return "st.builds(Node, st.integers(), st.one_of(st.none(), st.builds(Node, st.integers(), st.none(), st.none())), st.one_of(st.none(), st.builds(Node, st.integers(), st.none(), st.none())))"
 
-
-    # Dynamic handling for np.ndarray with optional dtype and shape
-
+    # NumPy arrays
     elif annotation == np.ndarray:
-        dtype = np.float64  # default dtype
-        shape = (3, 3)  # default shape if none provided
+        dtype = np.float64
+        shape = (3, 3)
 
-        # Check if the annotation has `__args__` to specify dtype and shape dynamically
         if hasattr(annotation, '__args__') and annotation.__args__:
             if len(annotation.__args__) > 0 and isinstance(annotation.__args__[0], type):
                 dtype = annotation.__args__[0]
             if len(annotation.__args__) > 1 and isinstance(annotation.__args__[1], tuple):
                 shape = annotation.__args__[1]
 
-        # Convert dtype to Hypothesis strategy and return the strategy
         dtype_strategy = {
             int: stnumpy.integer_dtypes(),
             float: stnumpy.floating_dtypes(),
-            complex: st.just(np.complex128),  # or complex64
-        }.get(dtype, stnumpy.floating_dtypes())  # default to float if not specified
+            complex: st.just(np.complex128),
+        }.get(dtype, stnumpy.floating_dtypes())
 
         return f"stnumpy.arrays(dtype={dtype_strategy}, shape={shape})"
 
+
+    # Handle user-defined classes
     elif isinstance(annotation, type) and hasattr(annotation, '__init__'):
-        # For user-defined classes, assume they have an __init__ method that we can pass arguments to.
         init_params = get_type_hints(annotation.__init__)
         init_strategies = ', '.join(
             type_to_strategy(param) for param in init_params.values() if param != 'self' and param != 'return')
         return f"st.builds({annotation.__name__}, {init_strategies})"
+
     visited_types.remove(annotation)
     raise ValueError(f"Unsupported type: {annotation}")
 
 
-def generate_test(func_name, func):
-    # variable
+def generate_test(func_name, func, class_name=None):
     global generated_code
     global return_type_check
 
@@ -146,45 +133,63 @@ def generate_test(func_name, func):
     if return_type == array.array:
         return_type_check = f"assert isinstance(result, array.array)"
 
-    if return_type == type(None):
+    # if not params:
+    #     params = "just(None)"
+    #     generated_code = f"""
+    #     @given({params})
+    #     def test_{class_name}_{func_name}({'_'}):
+    #         instance = {class_name}()
+    #         result = instance.{func_name}({args})
+    #         {return_type_check}
+    #     """
+
+
+    #generated test fonction in methods
+    if class_name:
+        # Instantiate the class
         generated_code = f"""
 @given({params})
-def test_{func_name}({args}):
-    result = {func_name}({args})
-    assert result is None
+def test_{class_name}_{func_name}({args}):
+    instance = {class_name}()
+    result = instance.{func_name}({args})
+    {return_type_check}
 """
+    else: # Function at module level
 
-    ##
-    # place to handel specialcase
-    ##
-    else:
-        generated_code = f"""
+        # if no parameter with return type
+        if not params and return_type is not None:
+            params = "just(None)"
+            args = "_"
+            generated_code = f"""
+@given({params})
+def test_{func_name}({args}):
+    result = {func_name}()
+    {return_type_check}
+"""
+        return generated_code
+
+    # for standart fonction
+    generated_code = f"""
 @given({params})
 def test_{func_name}({args}):
     result = {func_name}({args})
     {return_type_check}
 """
-
     return generated_code
 
 
 def main():
     global test_code
-    # Load the module dynamicaly
-    module_name = 'minitest'
-    file_path = '../doc1/minitest.py'
+    module_name = 'mytest'
+    file_path = 'mytest.py'
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)  # Execute and load the module codes
+    spec.loader.exec_module(module)  # Execute and load the module code
 
     # Parse the file
     with open(file_path, "r") as source:
         tree = ast.parse(source.read())
 
-    # Extract function definitions
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-
-    # important import
     test_code = "from hypothesis import given, strategies as st, settings\n"
     test_code += f"from {module_name} import *\n\n"
     test_code += "from numpy import *\n\n"
@@ -194,23 +199,33 @@ def main():
     test_code += "import numpy as np\n\n"
     test_code += "from hypothesis.extra import numpy as stnumpy\n\n"
     test_code += "from hypothesis.extra.numpy import *\n\n"
+    test_code += "from hypothesis.strategies import just"
 
-
-    # Extract function name + type hint
-    for func in functions:
-        func_name = func.name
-        func_obj = getattr(module, func_name)
-        type_hints = get_type_hints(func_obj)
-
-        # send information to the generator
-        test_code += generate_test(func_name, type_hints)
+    # Process classes and functions
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            # Top-level function
+            func_name = node.name
+            func_obj = getattr(module, func_name)
+            type_hints = get_type_hints(func_obj)
+            test_code += generate_test(func_name, type_hints)
+        elif isinstance(node, ast.ClassDef):
+            # Class with methods
+            class_name = node.name
+            class_obj = getattr(module, class_name)
+            for class_node in node.body:
+                if isinstance(class_node, ast.FunctionDef):
+                    method_name = class_node.name
+                    method_obj = getattr(class_obj, method_name)
+                    type_hints = get_type_hints(method_obj)
+                    test_code += generate_test(method_name, type_hints, class_name)
 
     # Write the generated test code to a file
     test_file_path = 'test_' + module_name + '.py'
     with open(test_file_path, 'w') as test_file:
         test_file.write(test_code)
 
-    # Run the generated tests and print the results
+    # Run the generated tests and print results
     print(f"Running tests in {test_file_path}...")
     result = pytest.main([test_file_path])
     if result == 0:
