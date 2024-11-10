@@ -26,6 +26,14 @@ def generate_test(func_name, func, class_name=None):
             for rtype in return_type.__args__
         )
         return_type_check = f"assert {return_checks}"
+
+    elif hasattr(return_type, '__origin__') and return_type.__origin__ == list:
+        # check type of element in the list (par exemple, List[int])
+        if len(return_type.__args__) == 1:
+            element_type = return_type.__args__[0]
+            return_type_check = (
+                f"assert isinstance(result, list) and all(isinstance(item, {element_type.__name__}) for item in result)"
+            )
     else:
         return_type_check = f"assert isinstance(result, {return_type.__name__})" if return_type else "assert result is not None"
 
@@ -87,9 +95,9 @@ def test_{func_name}({args}):
 
 def main():
     global test_code
-    sys.path.append('') #  path of the file to a succesful import
-    module_name = 'smalltest'
-    file_path = 'smalltest.py'  #../web_gui/pom/pages/kk/kk001.py
+    sys.path.append('D:/BA/BA/benchmack') #  path of the file to a succesful import # ('D:/BA/BA/benchmack')
+    module_name = 'Komplexfunktion'
+    file_path = '../benchmack/Komplexfunktion.py'  #../web_gui/pom/pages/kk/kk001.py
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # Execute and load the module code
