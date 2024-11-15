@@ -1,6 +1,6 @@
 import ast
 import importlib.util
-from typing import get_type_hints, Union
+from typing import get_type_hints, Union, Literal
 import array
 
 import pytest
@@ -40,13 +40,25 @@ def generate_test(func_name, func, class_name=None):
 
 
     elif hasattr(return_type, '__origin__') and return_type.__origin__ == list:
-
         # Recursive check for nested lists
         if len(return_type.__args__) == 1:
             element_type = return_type.__args__[0]
             # Start the nested all() checks from the outermost list
             return_type_check = (
                 f"assert isinstance(result, list) and all({recursive_list_check(element_type)} for item0 in result)")
+
+    #For Literal
+    elif hasattr(return_type, '__origin__') and return_type.__origin__ == Literal:
+        # Handle Literal as return type
+        literals = ', '.join(repr(arg) for arg in return_type.__args__)
+        return_type_check = f"assert result in [{literals}]"
+
+    # Modify the return type check for NewType
+    if hasattr(return_type, '__supertype__'):  # Check for NewType
+        base_type = return_type.__supertype__
+        return_type_check = f"assert isinstance(result, {base_type.__name__})"
+
+
     else:
         return_type_check = f"assert isinstance(result, {return_type.__name__})"
 
@@ -124,6 +136,7 @@ def main():
     test_code += "from numpy import *\n\n"
     test_code += "import array\n"
     test_code += "from collections import deque\n"
+    test_code += "from types import NoneType\n"
     test_code += "from binarytree import Node\n"
     test_code += "import numpy as np\n\n"
     test_code += "from hypothesis.extra import numpy as stnumpy\n\n"
