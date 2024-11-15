@@ -7,7 +7,6 @@ import pytest
 from strategies import type_to_strategy
 import sys
 
-
 def generate_test(func_name, func, class_name=None):
     global generated_code
     global return_type_check
@@ -18,6 +17,18 @@ def generate_test(func_name, func, class_name=None):
     args = ', '.join(param[0] for param in func.items() if param[0] != 'return')
     return_type = func.get('return', None)
 
+    def recursive_list_check(element_type, level=0):
+        """Recursively build list type assertions for nested lists with unique variable names."""
+        var_name = f"item{level}"
+        if hasattr(element_type, '__origin__') and element_type.__origin__ == list:
+            inner_type = element_type.__args__[0]
+            inner_check = recursive_list_check(inner_type, level + 1)
+            # Build nested all() checks for each level with unique variable names
+            return f"(isinstance({var_name}, list) and all({inner_check} for {var_name} in {var_name}))"
+        else:
+            # Base case: Check the innermost type
+            return f"isinstance({var_name}, {element_type.__name__})"
+
     if hasattr(return_type, '__origin__') and return_type.__origin__ == Union:
         return_checks = " or ".join(
             f"isinstance(result, {rtype.__name__})" if rtype != type(
@@ -27,15 +38,17 @@ def generate_test(func_name, func, class_name=None):
         )
         return_type_check = f"assert {return_checks}"
 
+
     elif hasattr(return_type, '__origin__') and return_type.__origin__ == list:
-        # check type of element in the list (par exemple, List[int])
+
+        # Recursive check for nested lists
         if len(return_type.__args__) == 1:
             element_type = return_type.__args__[0]
+            # Start the nested all() checks from the outermost list
             return_type_check = (
-                f"assert isinstance(result, list) and all(isinstance(item, {element_type.__name__}) for item in result)"
-            )
+                f"assert isinstance(result, list) and all({recursive_list_check(element_type)} for item0 in result)")
     else:
-        return_type_check = f"assert isinstance(result, {return_type.__name__})" if return_type else "assert result is not None"
+        return_type_check = f"assert isinstance(result, {return_type.__name__})"
 
 
 
@@ -95,9 +108,9 @@ def test_{func_name}({args}):
 
 def main():
     global test_code
-    sys.path.append('D:/BA/BA/benchmack') #  path of the file to a succesful import # ('D:/BA/BA/benchmack')
-    module_name = 'Komplexfunktion'
-    file_path = '../benchmack/Komplexfunktion.py'  #../web_gui/pom/pages/kk/kk001.py
+    sys.path.append('') #  path of the file to a succesful import # ('D:/BA/BA/benchmack')
+    module_name = 'finaltest'
+    file_path = 'finaltest.py'  #../web_gui/pom/pages/kk/kk001.py
     spec = importlib.util.spec_from_file_location(module_name, file_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # Execute and load the module code
