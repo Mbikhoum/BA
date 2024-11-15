@@ -24,45 +24,23 @@ def generate_test(func_name, func, class_name=None):
 
     #For Literal
     if hasattr(return_type, '__origin__') and return_type.__origin__ == Literal:
-        # Handle Literal as return type
         literals = ', '.join(repr(arg) for arg in return_type.__args__)
         return_type_check = f"assert result in [{literals}]"
 
-    def recursive_list_check(element_type, level=0):
-        """Recursively build list type assertions for nested lists ."""
-        var_name = f"item{level}"
-        if hasattr(element_type, '__origin__') and element_type.__origin__ == list:
-            inner_type = element_type.__args__[0]
-            inner_check = recursive_list_check(inner_type, level + 1)
-            # Build nested all() checks  each level with unique variable names....
-            return f"(isinstance({var_name}, list) and all({inner_check} for {var_name} in {var_name}))"
-        else:
-            # Base case.
-            return f"isinstance({var_name}, {element_type.__name__})"
+    ####################################################################################################################
 
-    # def recursive_dict_check(element_type, level=0):
-    #     """Recursively build dict type assertions for nested dicts with list elements."""
-    #     var_name = f"item{level}"
-    #
-    #     if hasattr(element_type, '__origin__'):
-    #         # Check if it's a dictionary
-    #         if element_type.__origin__ == dict:
-    #             key_type, value_type = element_type.__args__
-    #             if hasattr(value_type, '__origin__') and value_type.__origin__ == list:
-    #                 inner_type = value_type.__args__[0]
-    #                 inner_check = recursive_list_check(inner_type, level + 1)
-    #                 # Build nested checks for dict with lists as values
-    #                 return f"(isinstance({var_name}, dict) and all(isinstance(k, {key_type.__name__}) and " \
-    #                        f"isinstance(v, list) and all({inner_check} for v in {var_name}.values()) " \
-    #                        f"for k, v in {var_name}.items()))"
-    #             else:
-    #                 # If it's a dictionary with non-list values
-    #                 return f"(isinstance({var_name}, dict) and all(isinstance(k, {key_type.__name__}) and " \
-    #                        f"isinstance(v, {value_type.__name__}) for k, v in {var_name}.items()))"
-    #         # Base case: If it's not a dictionary or list, use the base type check
-    #         elif hasattr(element_type, '__args__'):
-    #             return f"isinstance({var_name}, {element_type.__name__})"
-    #     return f"isinstance({var_name}, {element_type.__name__})"
+    def handle_union_type_check(type_):
+        """Manages Union types to check that the element belongs to one of the specified types."""
+        if hasattr(type_, '__origin__') and type_.__origin__ == Union:
+            # Generate a check for each type in the Union
+            return " or ".join(
+                f"isinstance(element, {rtype.__name__})" for rtype in type_.__args__
+            )
+        # If it's not a Union, return a classic check
+        return f"isinstance(element, {type_.__name__})"
+    ####################################################################################################################
+
+
 
 # Union
     if hasattr(return_type, '__origin__') and return_type.__origin__ == Union:
@@ -74,27 +52,31 @@ def generate_test(func_name, func, class_name=None):
         )
         return_type_check = f"assert {return_checks}"
 
-#list
-    elif hasattr(return_type, '__origin__') and return_type.__origin__ == list:
-        # Recursive check for nested lists
-        if len(return_type.__args__) == 1:
-            element_type = return_type.__args__[0]
-            # Start the nested all() checks from the outermost list
-            return_type_check = (
-                f"assert isinstance(result, list) and all({recursive_list_check(element_type)} for item0 in result)")
 #dict
 
     elif hasattr(return_type, '__origin__') and return_type.__origin__ == dict:
         # Recursive check for nested dictionaries
         if len(return_type.__args__) == 2:
             key_type, value_type = return_type.__args__
-            # Start the nested checks from the outermost dict
-            return_type_check = (
-                f"assert isinstance(result, dict) and all(isinstance(k, {key_type.__name__}) and "
-                f"isinstance(v, {value_type.__name__}) for k, v in result.items())")
+            # If the value_type is a Union, we need to handle each type in the Union
+            if hasattr(value_type, '__origin__') and value_type.__origin__ == Union:
+                # Check if the value matches one of the types in the Union
+                value_checks = " or ".join(
+                    f"isinstance(v, {rtype.__name__})" if rtype != type(None) else "v is None"
+                    for rtype in value_type.__args__
+                )
+                return_type_check = (
+                    f"assert isinstance(result, dict) and all(isinstance(k, {key_type.__name__}) and ({value_checks}) "
+                    f"for k, v in result.items())"
+                )
+            else:
+                # Handle the case where value_type is a simple type (non-Union)
+                return_type_check = (
+                    f"assert isinstance(result, dict) and all(isinstance(k, {key_type.__name__}) and "
+                    f"isinstance(v, {value_type.__name__}) for k, v in result.items())"
+                )
 
-
-# tuple
+    # tuple
     elif hasattr(return_type, '__origin__') and return_type.__origin__ == tuple:
     # Recursive check for nested tuples
         if len(return_type.__args__) > 0:
@@ -107,9 +89,52 @@ def generate_test(func_name, func, class_name=None):
                 else f"isinstance(result[{i}], list) and all(isinstance(item, {elem_type.__args__[0].__name__}) for item in result[{i}])"
                 for i, elem_type in enumerate(element_types)
             )
+    # Handle tuple types
+    elif hasattr(return_type, '__origin__') and return_type.__origin__ == tuple:
+        checks = [
+            f"isinstance(result[{i}], {t.__name__})"
+            for i, t in enumerate(return_type.__args__)
+        ]
+        return " and ".join(checks)
+
+
+    def recursive_list_check(element_type, level=0):
+        """recursive list generation."""
+        var_name = f"item{level}"
+        if hasattr(element_type, '__origin__') and element_type.__origin__ == list:
+            inner_type = element_type.__args__[0]
+            # Recursive checking for types in the list
+            inner_check = recursive_list_check(inner_type, level + 1)
+            return f"(isinstance({var_name}, list) and all({inner_check} for {var_name} in {var_name}))"
+        else:
+            # if Union
+            return f"(isinstance({var_name}, {element_type.__name__}) or " + handle_union_type_check(element_type) + ")"
+        # list
+    if return_type is None:
+        return_type_check = ""
+    elif hasattr(return_type, '__origin__') and return_type.__origin__ == list:
+        # Recursive check for nested lists
+        if len(return_type.__args__) == 1:
+            element_type = return_type.__args__[0]
+            # Check if the element type is a custom class (not a built-in type)
+            if isinstance(element_type, type):  # Check if element_type is a class
+                return_type_check = (
+                    f"assert isinstance(result, list) and all(isinstance(item, {element_type.__name__}) for item in result)"
+                )
+            else:
+                # Start the nested all() checks from the outermost list
+                return_type_check = (
+                    f"assert isinstance(result, list) and all({recursive_list_check(element_type)} for item0 in result)")
+
+    # # Handle MyList[int] and similar custom types
+    # if hasattr(return_type, '__supertype__'):  # Check for NewType
+    #     base_type = return_type.__supertype__
+    #     return_type_check = f"assert isinstance(result, {base_type.__name__})"
 
     else:
         return_type_check = f"assert isinstance(result, {return_type.__name__})"
+
+
 
 
 
