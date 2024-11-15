@@ -1,11 +1,12 @@
-from typing import get_type_hints, Any, TypeVar, Union
+from typing import get_type_hints, Any, TypeVar, Union, Callable, Literal
 
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as stnumpy
 from binarytree import Node
 import numpy as np
 import array
-from collections import deque
+from collections import deque, abc
+from datetime import datetime, date, time
 
 
 def type_to_strategy(annotation, visited_types=None):
@@ -112,6 +113,96 @@ def type_to_strategy(annotation, visited_types=None):
         init_strategies = ', '.join(
             type_to_strategy(param) for param in init_params.values() if param != 'self' and param != 'return')
         return f"st.builds({annotation.__name__}, {init_strategies})"
+
+    #Frozenset
+    elif annotation.__origin__ == frozenset:
+        return f"st.frozensets({type_to_strategy(annotation.__args__[0])})"
+
+    #NamedTuple
+    elif hasattr(annotation, '_fields'):
+        fields = ', '.join(type_to_strategy(annotation.__annotations__[field]) for field in annotation._fields)
+        return f"st.builds({annotation.__name__}, {fields})"
+
+    #Optional
+    elif annotation.__origin__ == Union and type(None) in annotation.__args__:
+        non_none_type = [arg for arg in annotation.__args__ if arg is not type(None)][0]
+        return f"st.one_of(st.none(), {type_to_strategy(non_none_type)})"
+
+    # Complex
+    elif annotation == complex:
+        real_strategy = 'st.floats()'  # or specify a range like st.floats(min_value=-100, max_value=100)
+        imag_strategy = 'st.floats()'  # similarly, you can specify ranges
+        return f"st.builds(complex, {real_strategy}, {imag_strategy})"
+
+    #Callable
+    elif annotation.__origin__ == Callable:
+        return "st.just(lambda *args, **kwargs: None)"
+
+    # byte
+    if annotation == bytes:
+        return "st.binary()"
+    elif annotation == bytearray:
+        return "st.builds(bytearray, st.binary())"
+
+    #Mapping
+    elif annotation.__origin__ == abc.Mapping:
+        key_type = type_to_strategy(annotation.__args__[0])
+        value_type = type_to_strategy(annotation.__args__[1])
+        return f"st.dictionaries({key_type}, {value_type})"
+
+    #Sequnece
+    elif annotation.__origin__ == abc.Sequence:
+        return f"st.lists({type_to_strategy(annotation.__args__[0])})"
+
+    #MutableMapping
+    elif annotation.__origin__ == abc.MutableMapping:
+        key_type = type_to_strategy(annotation.__args__[0])
+        value_type = type_to_strategy(annotation.__args__[1])
+        return f"st.dictionaries({key_type}, {value_type})"
+
+    #MutableSequence
+    elif annotation.__origin__ == abc.MutableSequence:
+        return f"st.lists({type_to_strategy(annotation.__args__[0])})"
+
+    # Literal
+    elif annotation.__origin__ == Literal:
+        literals = ', '.join(repr(arg) for arg in annotation.__args__)
+        return f"st.sampled_from([{literals}])"
+
+    # Date time
+    elif annotation == datetime:
+        return "st.datetimes()"
+    elif annotation == date:
+        return "st.dates()"
+    elif annotation == time:
+        return "st.times()"
+
+    #
+    elif hasattr(annotation, '__supertype__'):  # Check for NewType
+        base_type = annotation.__supertype__
+        return type_to_strategy(base_type)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     visited_types.remove(annotation)
     raise ValueError(f"Unsupported type: {annotation}")
